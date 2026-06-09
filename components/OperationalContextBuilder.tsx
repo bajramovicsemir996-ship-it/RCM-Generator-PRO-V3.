@@ -1,0 +1,472 @@
+
+
+import React, { useState, useRef, useEffect } from 'react';
+import { X, Send, Bot, User, Sparkles, Loader2, CheckCircle2, MessageSquarePlus, Info, Zap, Settings, Shield, ChevronRight, Maximize2, ArrowLeft, Undo2, Pencil, Save, RotateCcw } from 'lucide-react';
+import { GoogleGenAI } from "@google/genai";
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+
+interface OperationalContextBuilderProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onComplete: (context: string) => void;
+  onUndo: () => void;
+  canUndo: boolean;
+  language: string;
+}
+
+interface Message {
+  role: 'user' | 'assistant';
+  content: string;
+  isDraft?: boolean;
+}
+
+export const OperationalContextBuilder: React.FC<OperationalContextBuilderProps> = ({ isOpen, onClose, onComplete, onUndo, canUndo, language }) => {
+  const INITIAL_MESSAGE: Message = { 
+    role: 'assistant', 
+    content: `Welcome. I am your lead RCM facilitator. To build a world-class maintenance strategy, we first need a deep understanding of your asset's operational reality. \n\nPlease tell me: **What asset are we analyzing today?** (Responding in ${language}).` 
+  };
+
+  const [messages, setMessages] = useState<Message[]>([INITIAL_MESSAGE]);
+  const [input, setInput] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [latestDraft, setLatestDraft] = useState<string | null>(null);
+  const [showFullReview, setShowFullReview] = useState(false);
+  const [isEditingDraft, setIsEditingDraft] = useState(false);
+  const [editableText, setEditableText] = useState('');
+  
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Auto-resize textarea when editing
+  useEffect(() => {
+    if (isEditingDraft && textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.height = textareaRef.current.scrollHeight + 'px';
+    }
+  }, [editableText, isEditingDraft]);
+
+  useEffect(() => {
+    if (scrollRef.current && !showFullReview) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [messages, isLoading, showFullReview]);
+
+  // Reset to initial message if language changes
+  useEffect(() => {
+    setMessages([INITIAL_MESSAGE]);
+    setLatestDraft(null);
+  }, [language]);
+
+  if (!isOpen) return null;
+
+  const handleResetConversation = () => {
+    setMessages([INITIAL_MESSAGE]);
+    setInput('');
+    setLatestDraft(null);
+    setShowFullReview(false);
+    setIsEditingDraft(false);
+    setEditableText('');
+  };
+
+  const handleSend = async () => {
+    if (!input.trim() || isLoading) return;
+
+    const userMessage = input.trim();
+    setInput('');
+    setMessages(prev => [...prev, { role: 'user', content: userMessage }]);
+    setIsLoading(true);
+
+    try {
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      
+      const history = messages.map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`).join('\n');
+      
+      const prompt = `
+        CONVERSATION HISTORY:
+        ${history}
+        
+        NEW USER REQUEST: ${userMessage}
+        TARGET LANGUAGE: ${language}
+        
+        TASK:
+        Generate a comprehensive and highly detailed "Operational Context" draft according to SAE JA1011 standards in ${language}.
+        
+        IMPORTANT: You MUST speak and generate all structured content in ${language}.
+        
+        REQUIRED DEPTH:
+        1. System Boundaries: List main components.
+        2. Functional Requirements: Primary performance and secondary.
+        3. Operating Conditions: Temperature, humidity, etc.
+        4. Failure Mechanisms: Typical wear modes.
+        5. Maintenance Intent: Proactive vs. Reactive goals.
+
+        FORMATTING RULES:
+        - DO NOT USE any markdown formatting characters.
+        - DO NOT USE asterisks (**) or hashes (#).
+        - Use ONLY plain text.
+        - Clearly separate sections with titles in ALL CAPITAL LETTERS for emphasis.
+        - Wrap the FINAL full structured draft in <DRAFT> tags.
+        - Provide a professional engineer-to-engineer summary before the tags in ${language}.
+      `;
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        config: {
+          temperature: 0.4,
+          seed: 42,
+          systemInstruction: `You are a world-class RCM Analyst. Your style is professional, technical, and concise. You provide extremely detailed context in ${language}.`
+        }
+      });
+
+      const aiText = response.text || "Communication error.";
+      
+      const draftMatch = aiText.match(/<DRAFT>([\s\S]*?)<\/DRAFT>/);
+      let draftContent = null;
+      let cleanResponse = aiText.replace(/<DRAFT>[\s\S]*?<\/DRAFT>/, '').trim();
+
+      if (draftMatch) {
+        draftContent = draftMatch[1].trim();
+        setLatestDraft(draftContent);
+        setEditableText(draftContent);
+        setShowFullReview(true);
+        setIsEditingDraft(true);
+      }
+
+      setMessages(prev => [...prev, { 
+        role: 'assistant', 
+        content: cleanResponse,
+        isDraft: !!draftContent 
+      }]);
+
+    } catch (error) {
+      setMessages(prev => [...prev, { role: 'assistant', content: "Error occurred." }]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleApply = () => {
+    if (latestDraft) {
+      onComplete(latestDraft);
+      onClose();
+    }
+  };
+
+  const handleStartEditing = () => {
+    setEditableText(latestDraft || '');
+    setIsEditingDraft(true);
+  };
+
+  const handleSaveEdit = () => {
+    setLatestDraft(editableText);
+    setIsEditingDraft(false);
+  };
+
+  const renderFormattedDraft = (content: string) => {
+    return (
+      <div className="max-w-none">
+        <ReactMarkdown 
+          remarkPlugins={[remarkGfm]}
+          components={{
+            h1: ({node, ...props}) => <h1 className="text-2xl font-black text-indigo-600 uppercase tracking-[0.2em] border-b border-slate-100 pb-4 mt-8 mb-4" {...props} />,
+            h2: ({node, ...props}) => <h2 className="text-xl font-black text-indigo-600 uppercase tracking-[0.15em] border-b border-slate-100 pb-3 mt-6 mb-3" {...props} />,
+            h3: ({node, ...props}) => <h3 className="text-lg font-bold text-slate-800 uppercase tracking-wider mt-5 mb-2" {...props} />,
+            p: ({node, ...props}) => <p className="text-slate-700 leading-relaxed mb-4 font-medium text-[16px]" {...props} />,
+            ul: ({node, ...props}) => <ul className="list-disc ml-6 mb-4 space-y-2 text-slate-700" {...props} />,
+            ol: ({node, ...props}) => <ol className="list-decimal ml-6 mb-4 space-y-2 text-slate-700" {...props} />,
+            li: ({node, ...props}) => <li className="pl-1" {...props} />,
+            strong: ({node, ...props}) => <strong className="font-black text-slate-900" {...props} />,
+          }}
+        >
+          {content}
+        </ReactMarkdown>
+      </div>
+    );
+  };
+
+  const renderFormattedMessage = (content: string) => {
+    return (
+      <div className="max-w-none">
+        <ReactMarkdown 
+          remarkPlugins={[remarkGfm]}
+          components={{
+            h1: ({node, ...props}) => <h1 className="text-lg font-black text-indigo-600 uppercase tracking-[0.15em] border-b border-slate-50 pb-2 mt-4 mb-2" {...props} />,
+            h2: ({node, ...props}) => <h2 className="text-base font-black text-indigo-600 uppercase tracking-wider pt-2" {...props} />,
+            p: ({node, ...props}) => <p className="text-[14px] text-slate-700 leading-relaxed mb-3 font-medium" {...props} />,
+            ul: ({node, ...props}) => <ul className="list-disc ml-4 mb-3 space-y-1 text-slate-700" {...props} />,
+            li: ({node, ...props}) => <li className="pl-1 text-[13px]" {...props} />,
+            strong: ({node, ...props}) => <strong className="font-bold text-slate-800" {...props} />,
+          }}
+        >
+          {content}
+        </ReactMarkdown>
+      </div>
+    );
+  };
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/40 backdrop-blur-xl p-0 sm:p-4 animate-in fade-in duration-500">
+      <div className="bg-white rounded-none sm:rounded-[2.5rem] shadow-[0_32px_128px_-16px_rgba(0,0,0,0.15)] w-full h-full max-h-screen overflow-hidden flex flex-col animate-in zoom-in-95 duration-500 border border-white/40">
+        
+        {/* Workstation Header */}
+        <div className="bg-white px-6 sm:px-10 py-5 sm:py-7 flex justify-between items-center shrink-0 border-b border-slate-50">
+          <div className="flex items-center gap-4 sm:gap-6">
+            <div className="p-3 sm:p-4 bg-indigo-600 rounded-[1.2rem] sm:rounded-[1.5rem] shadow-2xl shadow-indigo-100 ring-4 ring-indigo-50">
+              <Sparkles size={20} className="text-white fill-white/20" />
+            </div>
+            <div>
+              <h3 className="font-black text-xl sm:text-2xl tracking-tighter text-slate-900 uppercase">
+                {showFullReview ? (isEditingDraft ? 'Editor Mode' : 'Review') : 'Context Hub'}
+              </h3>
+              <div className="flex items-center gap-3 mt-1.5">
+                <div className="flex items-center gap-1.5 px-2 py-0.5 bg-emerald-50 rounded-md border border-emerald-100">
+                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
+                  <span className="text-[9px] text-emerald-700 font-black uppercase tracking-widest">{language} Synthesis</span>
+                </div>
+                <span className="hidden sm:inline text-[9px] text-slate-400 font-black uppercase tracking-widest">Industry standard SAE JA1011</span>
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 sm:gap-3">
+            <button
+              onClick={handleResetConversation}
+              className="p-2 sm:p-3 rounded-full text-slate-400 hover:text-indigo-600 hover:bg-slate-100 transition-all"
+              title="Reset Conversation"
+            >
+              <RotateCcw size={24} />
+            </button>
+            <button
+              onClick={onUndo}
+              disabled={!canUndo}
+              className={`p-2 sm:p-3 rounded-full transition-all ${
+                canUndo ? 'bg-slate-100 text-slate-600 hover:bg-slate-200' : 'text-slate-200 opacity-20'
+              }`}
+              title="Undo last action"
+            >
+              <Undo2 size={24} />
+            </button>
+            <button onClick={onClose} className="p-2 sm:p-3 bg-slate-50 text-slate-400 hover:bg-red-50 hover:text-red-500 rounded-full transition-all duration-300">
+              <X size={24} />
+            </button>
+          </div>
+        </div>
+
+        {/* Main Interface Area */}
+        <div className="flex-1 flex overflow-hidden bg-white relative">
+          
+          {showFullReview ? (
+            <div className="flex-1 flex flex-col animate-in slide-in-from-right duration-500">
+              <div className="flex-1 overflow-y-auto px-4 sm:px-10 py-10 sm:py-16 bg-slate-50/30 custom-scrollbar">
+                <div className="max-w-7xl mx-auto">
+                  <div className="flex justify-between items-center mb-10">
+                    <button 
+                      onClick={() => { setShowFullReview(false); setIsEditingDraft(false); }}
+                      className="flex items-center gap-2 text-indigo-600 font-black text-xs uppercase tracking-widest hover:-translate-x-1 transition-transform"
+                    >
+                      <ArrowLeft size={16} /> Back to Chat
+                    </button>
+                    
+                    {!isEditingDraft ? (
+                      <button 
+                        onClick={handleStartEditing}
+                        className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 text-slate-600 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-50 hover:text-indigo-600 transition-all shadow-sm"
+                      >
+                        <Pencil size={14} /> Edit Context
+                      </button>
+                    ) : (
+                      <div className="flex gap-3">
+                        <button 
+                          onClick={handleSaveEdit}
+                          className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-md"
+                        >
+                          <Save size={14} /> Save Changes
+                        </button>
+                        <button 
+                          onClick={() => setIsEditingDraft(false)}
+                          className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 text-slate-400 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-50 transition-all shadow-sm"
+                        >
+                          <RotateCcw size={14} /> Cancel
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  
+                  <div className="bg-white p-6 sm:p-16 lg:p-20 rounded-[2rem] sm:rounded-[3rem] shadow-2xl border border-slate-100 mb-20 overflow-hidden relative">
+                    <div className="flex items-center gap-4 mb-10 sm:mb-12">
+                      <div className={`w-1.5 h-12 sm:h-16 ${isEditingDraft ? 'bg-amber-500' : 'bg-indigo-600'} rounded-full`}></div>
+                      <div>
+                        <h2 className="text-2xl sm:text-4xl font-black text-slate-900 tracking-tighter uppercase mb-2">
+                          {isEditingDraft ? 'Refinement' : 'Operational Context'}
+                        </h2>
+                        <p className="text-[10px] sm:text-sm font-bold text-slate-400 uppercase tracking-[0.2em]">
+                          Generated in {language}
+                        </p>
+                      </div>
+                    </div>
+                    
+                    {isEditingDraft ? (
+                      <div className="flex-1 flex flex-col bg-white border-2 border-indigo-100 rounded-[2.5rem] shadow-xl overflow-hidden animate-in zoom-in-95 duration-300">
+                        <div className="bg-indigo-50 px-8 py-3 flex items-center justify-between border-b border-indigo-100">
+                          <div className="flex items-center gap-2">
+                            <div className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse"></div>
+                            <span className="text-[10px] font-black uppercase tracking-widest text-indigo-700">Editor Active</span>
+                          </div>
+                          <span className="text-[9px] font-bold text-indigo-400 uppercase tracking-widest">Live Document Mode</span>
+                        </div>
+                        <textarea
+                          ref={textareaRef}
+                          value={editableText}
+                          onChange={(e) => setEditableText(e.target.value)}
+                          className="w-full p-8 sm:p-12 text-slate-800 text-base sm:text-lg font-medium leading-relaxed focus:outline-none resize-none overflow-hidden"
+                          style={{ minHeight: '600px' }}
+                          autoFocus
+                        />
+                      </div>
+                    ) : (
+                      <div 
+                        onClick={handleStartEditing}
+                        className="prose prose-slate max-w-none hover:bg-slate-50 transition-all cursor-text group relative rounded-[1.5rem] p-4 -m-4"
+                      >
+                        <div className="absolute top-0 right-4 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-2 text-indigo-400 bg-indigo-50 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest">
+                           <Pencil size={10} /> Click to edit context
+                        </div>
+                        {latestDraft && renderFormattedDraft(latestDraft)}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+              
+              <div className="p-6 sm:p-10 bg-white border-t border-slate-50 flex justify-center shrink-0">
+                <div className="max-w-4xl w-full flex gap-4 sm:gap-6">
+                  <button
+                    onClick={handleApply}
+                    disabled={isEditingDraft}
+                    className={`flex-1 py-4 sm:py-6 rounded-[1.5rem] sm:rounded-[2rem] text-xs sm:text-sm font-black uppercase tracking-[0.25em] transition-all flex items-center justify-center gap-3 shadow-2xl active:scale-95 ${isEditingDraft ? 'bg-slate-100 text-slate-300 cursor-not-allowed' : 'bg-slate-900 text-white hover:bg-indigo-600 shadow-slate-200'}`}
+                  >
+                    <CheckCircle2 size={24} className="hidden sm:inline" />
+                    Confirm & Transfer
+                  </button>
+                  <button 
+                    onClick={() => { setShowFullReview(false); setIsEditingDraft(false); }}
+                    className="px-6 sm:px-12 py-4 sm:py-6 bg-white border-2 border-slate-100 text-slate-400 rounded-[1.5rem] sm:rounded-[2rem] text-xs sm:text-sm font-black uppercase tracking-widest hover:text-slate-600 hover:bg-slate-50 transition-all"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="flex-1 flex flex-col overflow-hidden animate-in fade-in duration-300">
+              <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 sm:px-6 py-6 sm:py-10 space-y-8 sm:space-y-12 custom-scrollbar">
+                <div className="max-w-5xl mx-auto space-y-10">
+                  {messages.map((m, i) => (
+                    <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} animate-in slide-in-from-bottom-4 duration-500`}>
+                      <div className={`flex gap-4 sm:gap-6 max-w-[95%] sm:max-w-[90%] ${m.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
+                        <div className={`w-10 h-10 sm:w-12 sm:h-12 rounded-[1rem] sm:rounded-[1.2rem] shrink-0 flex items-center justify-center shadow-2xl ${m.role === 'user' ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-white'}`}>
+                          {m.role === 'user' ? <User size={20} /> : <Bot size={22} />}
+                        </div>
+                        <div className="flex flex-col gap-4 min-w-0">
+                          <div className={`p-6 sm:p-8 rounded-[1.8rem] sm:rounded-[2.2rem] shadow-sm border ${
+                            m.role === 'user' 
+                              ? 'bg-indigo-600 text-white border-indigo-500 rounded-tr-none text-base sm:text-lg font-bold' 
+                              : 'bg-white text-slate-800 border-slate-100 rounded-tl-none ring-1 ring-slate-50'
+                          }`}>
+                            {m.role === 'user' ? <p className="leading-relaxed">{m.content}</p> : renderFormattedMessage(m.content)}
+                          </div>
+                          
+                          {m.isDraft && latestDraft && i === messages.length - 1 && (
+                            <div className="bg-slate-50/50 rounded-[2.2rem] sm:rounded-[2.5rem] border border-slate-100 p-6 sm:p-8 space-y-6 mt-2 animate-in fade-in zoom-in-95 duration-700">
+                               <div className="flex items-center justify-between">
+                                 <div className="flex items-center gap-3">
+                                   <div className="p-2 bg-indigo-100 text-indigo-600 rounded-lg"><Settings size={18} /></div>
+                                   <h5 className="text-[10px] sm:text-xs font-black text-slate-900 uppercase tracking-widest">Technical Draft</h5>
+                                 </div>
+                                 <button onClick={() => setShowFullReview(true)} className="text-[9px] sm:text-[10px] font-black text-indigo-600 hover:text-indigo-700 flex items-center gap-2 uppercase tracking-widest">
+                                   <Maximize2 size={14} /> Full Review
+                                 </button>
+                               </div>
+                               
+                               <div className="bg-white p-6 sm:p-8 rounded-[1.5rem] sm:rounded-[1.8rem] border border-slate-200 shadow-inner text-slate-700 text-[13px] sm:text-[14px] leading-relaxed font-medium overflow-y-auto max-h-[400px]">
+                                 <div className="prose prose-slate prose-sm max-w-none">
+                                   <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                     {latestDraft}
+                                   </ReactMarkdown>
+                                 </div>
+                               </div>
+                               
+                               <div className="flex gap-4">
+                                  <button onClick={handleApply} className="flex-1 py-4 sm:py-5 bg-slate-900 text-white rounded-2xl text-[10px] sm:text-[12px] font-black uppercase tracking-[0.2em] hover:bg-indigo-600 transition-all flex items-center justify-center gap-3 shadow-2xl active:scale-95">
+                                    Confirm
+                                  </button>
+                                  <button onClick={() => setShowFullReview(true)} className="px-5 sm:px-6 py-4 sm:py-5 bg-white border border-slate-200 text-slate-500 rounded-2xl text-[10px] sm:text-[12px] font-black uppercase tracking-widest hover:bg-slate-50 transition-all">
+                                    Edit Large
+                                  </button>
+                               </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+
+                  {isLoading && (
+                    <div className="flex justify-start">
+                      <div className="flex gap-4 sm:gap-6 items-center">
+                        <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-[1rem] sm:rounded-[1.2rem] bg-indigo-50 flex items-center justify-center animate-pulse">
+                          <Loader2 size={22} className="text-indigo-600 animate-spin" />
+                        </div>
+                        <div className="px-5 sm:px-6 py-3 sm:py-4 bg-white border border-slate-100 rounded-full shadow-sm flex items-center gap-3">
+                           <span className="text-[9px] sm:text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Synthesis in {language}</span>
+                           <div className="flex gap-1.5">
+                             <div className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
+                             <div className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
+                             <div className="w-1.5 h-1.5 bg-indigo-600 rounded-full animate-bounce"></div>
+                           </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Input Station */}
+              <div className="p-6 sm:p-10 shrink-0 border-t border-slate-50 bg-white shadow-[0_-20px_40px_rgba(0,0,0,0.02)]">
+                <div className="max-w-4xl mx-auto">
+                  <div className="flex gap-4 sm:gap-6">
+                    <button 
+                      onClick={handleResetConversation}
+                      className="p-4 sm:p-6 bg-slate-50 text-slate-400 hover:text-indigo-600 hover:bg-slate-100 rounded-[1.5rem] sm:rounded-[2rem] transition-all border-2 border-slate-50 flex items-center justify-center shrink-0"
+                    >
+                      <RotateCcw size={20} />
+                    </button>
+                    <div className="flex-1 relative group">
+                      <input 
+                        type="text" 
+                        value={input}
+                        onChange={e => setInput(e.target.value)}
+                        onKeyDown={e => e.key === 'Enter' && handleSend()}
+                        placeholder={`Talk to MIRA in ${language}...`}
+                        className="w-full bg-slate-50 border-2 border-slate-50 rounded-[1.5rem] sm:rounded-[2rem] px-6 sm:px-8 py-4 sm:py-6 text-sm sm:text-base font-bold text-slate-800 focus:bg-white focus:border-indigo-600 focus:ring-4 focus:ring-indigo-100 outline-none transition-all placeholder:text-slate-300 shadow-inner pr-24"
+                      />
+                    </div>
+                    <button 
+                      onClick={handleSend}
+                      disabled={!input.trim() || isLoading}
+                      className="px-6 sm:px-10 bg-slate-900 text-white rounded-[1.5rem] sm:rounded-[2rem] hover:bg-indigo-600 active:scale-95 disabled:opacity-20 transition-all shadow-2xl flex items-center justify-center gap-3 group"
+                    >
+                      <span className="font-black text-xs sm:text-sm uppercase tracking-widest">Analyze</span>
+                      <Send size={18} className="group-hover:translate-x-1 group-hover:-translate-y-1 transition-transform" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
