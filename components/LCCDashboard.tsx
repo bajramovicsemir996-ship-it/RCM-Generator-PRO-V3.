@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { RCMItem } from '../types';
-import { RotateCcw, DollarSign, TrendingDown, Bell, TrendingUp, Settings2, Download, Table2, ChevronDown, ChevronUp, AlertCircle, Wrench, Package, Info, Users, Plus, Trash2, Clock, Calculator } from 'lucide-react';
+import { RotateCcw, DollarSign, TrendingDown, Bell, TrendingUp, Settings2, Download, Table2, ChevronDown, ChevronUp, AlertCircle, Wrench, Package, Info, Users, Plus, Trash2, Clock, Calculator, BarChart as BarChartIcon, Save } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer } from 'recharts';
 
@@ -425,7 +425,7 @@ export const LCCDashboard: React.FC<LCCDashboardProps> = ({ items, onUpdate, onU
            <div className="flex items-center justify-between mb-8">
              <div>
                <h3 className="text-lg font-black text-slate-900 tracking-tight flex items-center gap-2 uppercase">
-                 <BarChart size={20} className="text-indigo-500" />
+                 <BarChartIcon size={20} className="text-indigo-500" />
                  Strategy Comparison Matrix
                </h3>
                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">Preventive Intensity vs. Failure Impact</p>

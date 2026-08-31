@@ -81,6 +81,7 @@ const App: React.FC = () => {
   const [activeImagePreview, setActiveImagePreview] = useState<FileData | null>(null);
   const [results, setResults] = useState<RCMItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<{ text: string, type: 'success' | 'error' } | null>(null);
   const [isMerging, setIsMerging] = useState(false);
   const [selectedLanguage, setSelectedLanguage] = useState('English');
 
@@ -487,7 +488,8 @@ const App: React.FC = () => {
       if (currentStudyIdRef.current === targetStudyId) {
         setResults(newItems);
       }
-      alert(`Bundle successfully added to workspace: "${targetStudy.name}"`);
+      setStatusMessage({ text: `Bundle successfully added to workspace: "${targetStudy.name}"`, type: 'success' });
+      setTimeout(() => setStatusMessage(null), 5000);
     } catch (e) {
       console.error(e);
       setError("Failed to add bundle to workspace.");
@@ -515,7 +517,8 @@ const App: React.FC = () => {
       await saveStudyToDB(newStudy);
       const freshStudies = await getAllStudies();
       setSavedStudies(freshStudies);
-      alert(`Bundle successfully saved to a new study: "${studyName}"`);
+      setStatusMessage({ text: `Bundle successfully saved to a new study: "${studyName}"`, type: 'success' });
+      setTimeout(() => setStatusMessage(null), 5000);
     } catch (e) {
       console.error(e);
       setError("Failed to create new study from workspace.");
@@ -943,13 +946,25 @@ const App: React.FC = () => {
               onAddToExistingStudy={handleAddToExistingStudy}
               language={selectedLanguage}
             />
-          ) : viewMode === 'rbi' ? (
-            <RBIDashboard items={results || []} onUpdate={handleResultsUpdate} onUndo={handleUndo} canUndo={history.length > 0} language={selectedLanguage} />
-          ) : viewMode === 'lcc' ? (
-            <LCCDashboard items={results || []} onUpdate={handleResultsUpdate} onUndo={handleUndo} canUndo={history.length > 0} />
           ) : (
             <div className="w-full px-2 py-6">
-              {!results && (
+              {statusMessage && (
+                <div className={`mb-6 p-4 rounded-2xl flex items-center gap-3 animate-in slide-in-from-top-4 duration-300 shadow-lg border ${
+                  statusMessage.type === 'success' ? 'bg-emerald-50 border-emerald-100 text-emerald-700' : 'bg-red-50 border-red-100 text-red-600'
+                }`}>
+                  {statusMessage.type === 'success' ? <CheckCircle2 size={20} /> : <AlertTriangle size={20} />}
+                  <p className="text-xs font-black uppercase tracking-widest">{statusMessage.text}</p>
+                  <button onClick={() => setStatusMessage(null)} className="ml-auto p-1 hover:bg-black/5 rounded-full"><X size={14} /></button>
+                </div>
+              )}
+              
+              {viewMode === 'rbi' ? (
+                <RBIDashboard items={results || []} onUpdate={handleResultsUpdate} onUndo={handleUndo} canUndo={history.length > 0} language={selectedLanguage} />
+              ) : viewMode === 'lcc' ? (
+                <LCCDashboard items={results || []} onUpdate={handleResultsUpdate} onUndo={handleUndo} canUndo={history.length > 0} />
+              ) : (
+                <>
+                  {!results && (
                 <div className="mb-8 text-center sm:text-left animate-in slide-in-from-bottom-4 duration-500 max-w-7xl mx-auto">
                   <h2 className="text-3xl font-black text-slate-900 mb-3 tracking-tighter uppercase">Generate Maintenance Strategies</h2>
                   <p className="text-slate-500 max-w-2xl text-lg leading-relaxed font-medium italic opacity-70">Provide operational context to generate a comprehensive Reliability Centered Maintenance analysis based on SAE JA1011 standards.</p>
@@ -1011,9 +1026,11 @@ const App: React.FC = () => {
                 </div>
               </div>
               {results && <AnalysisResult data={results} studyName={studyName} contextText={contextText} filesData={filesData} onUpdate={handleResultsUpdate} onUpdateFiles={setFilesData} onUndo={handleUndo} canUndo={history.length > 0} language={selectedLanguage} />}
-            </div>
+            </>
           )}
-        </main>
+        </div>
+      )}
+    </main>
         {activeImagePreview && (
           <InteractiveImageModal 
             isOpen={!!activeImagePreview} 

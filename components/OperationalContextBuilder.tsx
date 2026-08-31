@@ -2,7 +2,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { X, Send, Bot, User, Sparkles, Loader2, CheckCircle2, MessageSquarePlus, Info, Zap, Settings, Shield, ChevronRight, Maximize2, ArrowLeft, Undo2, Pencil, Save, RotateCcw } from 'lucide-react';
-import { GoogleGenAI } from "@google/genai";
+import { getGeminiClient, callWithModelFallback } from "../services/geminiService";
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -78,7 +78,7 @@ export const OperationalContextBuilder: React.FC<OperationalContextBuilderProps>
     setIsLoading(true);
 
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      const ai = getGeminiClient();
       
       const history = messages.map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`).join('\n');
       
@@ -110,15 +110,20 @@ export const OperationalContextBuilder: React.FC<OperationalContextBuilderProps>
         - Provide a professional engineer-to-engineer summary before the tags in ${language}.
       `;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        config: {
-          temperature: 0.4,
-          seed: 42,
-          systemInstruction: `You are a world-class RCM Analyst. Your style is professional, technical, and concise. You provide extremely detailed context in ${language}.`
+      const response = await callWithModelFallback(
+        ['gemini-3.7-flash', 'gemini-2.5-flash'],
+        async (model) => {
+          return await ai.models.generateContent({
+            model,
+            contents: [{ role: 'user', parts: [{ text: prompt }] }],
+            config: {
+              temperature: 0.4,
+              seed: 42,
+              systemInstruction: `You are a world-class RCM Analyst. Your style is professional, technical, and concise. You provide extremely detailed context in ${language}.`
+            }
+          });
         }
-      });
+      );
 
       const aiText = response.text || "Communication error.";
       

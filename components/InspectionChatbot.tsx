@@ -1,7 +1,7 @@
 
-import { GoogleGenAI } from "@google/genai";
 import React, { useState, useRef, useEffect } from 'react';
 import { InspectionStep, InspectionSheet } from '../types';
+import { getGeminiClient, callWithModelFallback } from '../services/geminiService';
 import { 
   X, Send, Sparkles, Plus, CheckCircle2, 
   Loader2, ChevronRight, RotateCcw, 
@@ -14,6 +14,7 @@ interface InspectionChatbotProps {
   language: string;
   componentContext?: string;
   failureModeContext?: string;
+  maintenanceTaskContext?: string;
 }
 
 interface ProposedStepAction {
@@ -68,7 +69,8 @@ export const InspectionChatbot: React.FC<InspectionChatbotProps> = ({
   onUpdateSteps, 
   language,
   componentContext,
-  failureModeContext
+  failureModeContext,
+  maintenanceTaskContext
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [input, setInput] = useState('');
@@ -128,19 +130,20 @@ export const InspectionChatbot: React.FC<InspectionChatbotProps> = ({
     setIsLoading(true);
 
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      const ai = getGeminiClient();
       
       const prompt = `
         USER REQUEST: "${userMsg}"
         CONTEXT:
         - Component: ${componentContext || 'Unknown'}
         - Failure Mode: ${failureModeContext || 'General'}
+        - Proposed Task (PROPOSED ACTION): ${maintenanceTaskContext || 'General maintenance'}
         - Current Steps: ${JSON.stringify(sheet.steps)}
         - Language: ${language}
 
         INSPECTION PROTOCOL BOT INSTRUCTIONS:
         1. You are an expert maintenance engineer helping to build inspection sheets (MIRA style).
-        2. Propose technical, clear, and actionable inspection steps.
+        2. Propose technical, clear, and actionable inspection steps that directly support the "PROPOSED TASK".
         3. Every step addition or update MUST be wrapped in <ACTION> tags with this JSON structure:
            {
              "type": "ADD" | "UPDATE",
@@ -156,14 +159,19 @@ export const InspectionChatbot: React.FC<InspectionChatbotProps> = ({
         5. Responses outside <ACTION> tags should be mentor-like and technical, generated ONLY in ${language}.
       `;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        config: {
-          temperature: 0.4,
-          systemInstruction: `You are the Inspection Protocol Assistant. You help create rigorous maintenance procedures EXCLUSIVELY in ${language}. NEVER use English unless the target language is English.`
+      const response = await callWithModelFallback(
+        ['gemini-3.7-flash', 'gemini-2.5-flash'],
+        async (model) => {
+          return await ai.models.generateContent({
+            model,
+            contents: [{ role: 'user', parts: [{ text: prompt }] }],
+            config: {
+              temperature: 0.4,
+              systemInstruction: `You are the Inspection Protocol Assistant. You help create rigorous maintenance procedures EXCLUSIVELY in ${language}. NEVER use English unless the target language is English.`
+            }
+          });
         }
-      });
+      );
 
       const { cleanText, proposals } = parseAIResponse(response.text || "");
       setMessages(prev => [...prev, { 
@@ -190,6 +198,7 @@ export const InspectionChatbot: React.FC<InspectionChatbotProps> = ({
     if (proposal.type === 'ADD') {
       const nextNum = newSteps.length > 0 ? Math.max(...newSteps.map(s => s.step)) + 1 : 1;
       newSteps.push({
+        id: `step-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
         step: (proposal.step.step as number) || nextNum,
         description: proposal.step.description || '',
         technique: proposal.step.technique || 'Visual',

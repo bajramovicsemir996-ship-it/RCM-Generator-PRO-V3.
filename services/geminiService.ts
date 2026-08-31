@@ -14,6 +14,7 @@ const inspectionSchema = {
       items: {
         type: Type.OBJECT,
         properties: {
+          id: { type: Type.STRING },
           step: { type: Type.INTEGER },
           description: { type: Type.STRING },
           criteria: { type: Type.STRING },
@@ -132,13 +133,40 @@ const componentIntelSchema = {
   required: ["description", "location", "visualCues"]
 };
 
-// Helper function to reliably get the API key
-const getApiKey = () => {
-  const key = process.env.GEMINI_API_KEY;
-  if (!key || key === 'undefined') {
-    throw new Error("Gemini API Key is missing. Please ensure it is set in your project settings.");
+// Helper function to reliably get the Gemini client
+// The client connects via the Express proxy server (/api/gemini) which securely
+// injects the server-side GEMINI_API_KEY into every upstream Google API request.
+export const getGeminiClient = (): GoogleGenAI => {
+  const baseUrl =
+    typeof window !== "undefined"
+      ? `${window.location.origin}/api/gemini`
+      : "http://localhost:3000/api/gemini";
+
+  return new GoogleGenAI({
+    apiKey: "proxy_key",
+    httpOptions: {
+      baseUrl,
+    },
+  });
+};
+
+export const callWithModelFallback = async <T>(
+  models: string[],
+  fn: (model: string) => Promise<T>
+): Promise<T> => {
+  let lastError: any = null;
+  for (const model of models) {
+    try {
+      return await fn(model);
+    } catch (err: any) {
+      console.warn(
+        `[GeminiService] Model ${model} failed, trying fallback. Error:`,
+        err?.message || err
+      );
+      lastError = err;
+    }
   }
-  return key;
+  throw lastError;
 };
 
 export const generateRCMAnalysis = async (
@@ -147,8 +175,7 @@ export const generateRCMAnalysis = async (
   language: string = 'English',
   existingItems: RCMItem[] = []
 ): Promise<RCMItem[]> => {
-  const apiKey = getApiKey();
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = getGeminiClient();
   
   const fileParts: any[] = [];
   const textParts: string[] = [];
@@ -180,8 +207,9 @@ export const generateRCMAnalysis = async (
     Operational Context: ${contextText}
     ${textParts.join('\n')}
     Target Language: ${language}
-    IMPORTANT: You MUST generate at least 35-40 unique and technically detailed failure modes (RCM items). 
-    The analysis must be EXHAUSTIVE, covering every critical and secondary component mentioned or implied by the assembly type.
+    IMPORTANT: You MUST focus on generating a maximum of 20 unique and technically detailed failure modes (RCM items).
+    Focus specifically on "must to do" maintenance activities that are feasible to perform in a steel plant or rolling mills.
+    Keep in mind that most of the tasks can be done on preventive stoppage or big failure as opportunistic maintenance.
     Ensure each failure mode is distinct and follows SAE JA1011 standards.
     Existing items to avoid duplicates (DO NOT repeat these): ${JSON.stringify(existingItems.map(i => i.failureMode))}
 
@@ -189,28 +217,33 @@ export const generateRCMAnalysis = async (
     Do NOT include English translations or mixed-language descriptions. If the target language is ${language}, provide ONLY ${language}.
   `;
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-3.1-pro-preview',
-    contents: [
-      { 
-        role: 'user', 
-        parts: [
-          ...fileParts,
-          { text: prompt }
-        ] 
-      }
-    ],
-    config: {
-      systemInstruction: `You are a Lead RCM Engineer specializing in massive asset assemblies. 
-      Your task is to provide an EXHAUSTIVE list of at least 35-40 failure modes per request. 
-      Do not stop early. Analyze every sub-system and functional failure path in extreme detail.
-      Produce valid, high-density technical analysis EXCLUSIVELY in ${language}. 
-      NEVER use English words for technical descriptions unless the target language is English or it is a highly standardized technical code.`,
-      responseMimeType: "application/json",
-      responseSchema: rcmSchema as any,
-      temperature: 0.4,
-    },
-  });
+  const response = await callWithModelFallback(
+    ['gemini-3.7-flash', 'gemini-3.1-pro-preview'],
+    async (model) => {
+      return await ai.models.generateContent({
+        model,
+        contents: [
+          { 
+            role: 'user', 
+            parts: [
+              ...fileParts,
+              { text: prompt }
+            ] 
+          }
+        ],
+        config: {
+          systemInstruction: `You are a Lead RCM Engineer specializing in steel plants and rolling mills.
+          Your task is to provide a focused list of maximum 20 failure modes per request, prioritizing "must to do" maintenance activities.
+          Focus on tasks feasible to perform during preventive stoppages or as opportunistic maintenance during big failures.
+          Produce valid, high-density technical analysis EXCLUSIVELY in ${language}. 
+          NEVER use English words for technical descriptions unless the target language is English or it is a highly standardized technical code.`,
+          responseMimeType: "application/json",
+          responseSchema: rcmSchema as any,
+          temperature: 0.4,
+        },
+      });
+    }
+  );
 
   const parsed = JSON.parse(response.text || "[]") as RCMItem[];
   return parsed.map(item => ({
@@ -223,8 +256,7 @@ export const generateRCMAnalysis = async (
 };
 
 export const extractOperationalContext = async (filesData: FileData[], language: string = 'English'): Promise<string> => {
-  const apiKey = getApiKey();
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = getGeminiClient();
   
   const parts: any[] = [];
   const supportedMediaTypes = [
@@ -250,18 +282,22 @@ export const extractOperationalContext = async (filesData: FileData[], language:
   const instructionPrompt = `Synthesize a comprehensive "Operational Context" for this asset in ${language}. Section titles in CAPITAL LETTERS. NO markdown.`;
   parts.push({ text: instructionPrompt });
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-3-flash-preview',
-    contents: [{ role: 'user', parts: parts }],
-    config: { temperature: 0.1 }
-  });
+  const response = await callWithModelFallback(
+    ['gemini-3.7-flash'],
+    async (model) => {
+      return await ai.models.generateContent({
+        model,
+        contents: [{ role: 'user', parts: parts }],
+        config: { temperature: 0.1 }
+      });
+    }
+  );
 
   return response.text || "No context extracted.";
 };
 
 export const extractMaintenanceLogic = async (filesData: FileData[], language: string = 'English'): Promise<string> => {
-  const apiKey = getApiKey();
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = getGeminiClient();
   
   const parts: any[] = [];
   for (const file of filesData) {
@@ -273,37 +309,56 @@ export const extractMaintenanceLogic = async (filesData: FileData[], language: s
   const instructionPrompt = `Analyze legacy maintenance data and convert it into a "Standard Operational Context" fragment in ${language}. NO markdown. CAPITAL LETTERS for sections.`;
   parts.push({ text: instructionPrompt });
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-3-flash-preview',
-    contents: [{ role: 'user', parts: parts }],
-    config: { temperature: 0.1 }
-  });
+  const response = await callWithModelFallback(
+    ['gemini-3.7-flash'],
+    async (model) => {
+      return await ai.models.generateContent({
+        model,
+        contents: [{ role: 'user', parts: parts }],
+        config: { temperature: 0.1 }
+      });
+    }
+  );
 
   return response.text || "No maintenance logic extracted.";
 };
 
 export const generateInspectionSheet = async (item: RCMItem, language: string = 'English'): Promise<InspectionSheet> => {
-  const apiKey = getApiKey();
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = getGeminiClient();
   
-  const prompt = `Generate technical field inspection sheet for: ${item.component}, ${item.failureMode}. Language: ${language}`;
+  const prompt = `
+    Generate a detailed technical maintenance inspection protocol for the following RCM task:
+    - Component: ${item.component}
+    - Function: ${item.function}
+    - Failure Mode: ${item.failureMode}
+    - PROPOSED TASK: ${item.maintenanceTask} (This is the primary action to be broken down into steps)
+    - Target Language: ${language}
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-3-flash-preview',
-    contents: [{ role: 'user', parts: [{ text: prompt }] }],
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: inspectionSchema as any,
-      temperature: 0.4
-    },
-  });
+    CRITICAL RULE: The steps MUST specifically explain how to execute the "PROPOSED TASK" listed above. 
+    Ensure the terminology is technical and compliant with asset management standards.
+    The response MUST be written EXCLUSIVELY in ${language}.
+  `;
+
+  const response = await callWithModelFallback(
+    ['gemini-3.7-flash'],
+    async (model) => {
+      return await ai.models.generateContent({
+        model,
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: inspectionSchema as any,
+          temperature: 0.4
+        },
+      });
+    }
+  );
 
   return JSON.parse(response.text || "{}") as InspectionSheet;
 };
 
 export const generateComponentIntel = async (componentName: string, language: string = 'English'): Promise<ComponentIntel> => {
-  const apiKey = getApiKey();
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = getGeminiClient();
   
   const prompt = `
     Provide deep technical engineering intelligence for the component: "${componentName}".
@@ -317,22 +372,26 @@ export const generateComponentIntel = async (componentName: string, language: st
     Target Audience: Expert Maintenance Engineers.
   `;
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-3.1-pro-preview',
-    contents: [{ role: 'user', parts: [{ text: prompt }] }],
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: componentIntelSchema as any,
-      temperature: 0.3
+  const response = await callWithModelFallback(
+    ['gemini-3.7-flash', 'gemini-3.1-pro-preview'],
+    async (model) => {
+      return await ai.models.generateContent({
+        model,
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: componentIntelSchema as any,
+          temperature: 0.3
+        }
+      });
     }
-  });
+  );
 
   return JSON.parse(response.text || "{}") as ComponentIntel;
 };
 
 export const classifyTasksExecution = async (tasks: any[]): Promise<Record<string, { condition: 'running' | 'stopped', shiftType: 'dayshift' | 'rotating' }>> => {
-  const apiKey = getApiKey();
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = getGeminiClient();
   
   // Strip tasks to only necessary fields to reduce payload size and improve speed
   const strippedTasks = tasks.map(t => ({
@@ -352,26 +411,31 @@ export const classifyTasksExecution = async (tasks: any[]): Promise<Record<strin
   `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      config: {
-        systemInstruction: "You are an expert Maintenance Planner. Formulate technical execution conditions (Running vs Stopped) and Shift Assignments (Day vs Rotating) based on the task description and common industry safety standards.",
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          additionalProperties: {
-            type: Type.OBJECT,
-            properties: {
-              condition: { type: Type.STRING, enum: ["running", "stopped"] },
-              shiftType: { type: Type.STRING, enum: ["dayshift", "rotating"] }
-            },
-            required: ["condition", "shiftType"]
+    const response = await callWithModelFallback(
+      ['gemini-3.7-flash'],
+      async (model) => {
+        return await ai.models.generateContent({
+          model,
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          config: {
+            systemInstruction: "You are an expert Maintenance Planner. Formulate technical execution conditions (Running vs Stopped) and Shift Assignments (Day vs Rotating) based on the task description and common industry safety standards.",
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              additionalProperties: {
+                type: Type.OBJECT,
+                properties: {
+                  condition: { type: Type.STRING, enum: ["running", "stopped"] },
+                  shiftType: { type: Type.STRING, enum: ["dayshift", "rotating"] }
+                },
+                required: ["condition", "shiftType"]
+              }
+            } as any,
+            temperature: 0.1
           }
-        } as any,
-        temperature: 0.1
+        });
       }
-    });
+    );
     
     return JSON.parse(response.text || "{}");
   } catch (error) {
@@ -386,8 +450,7 @@ export const optimizeSchedule = async (
   year: number,
   month: number
 ): Promise<Record<string, string>> => {
-  const apiKey = getApiKey();
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = getGeminiClient();
   
   const strippedTasks = tasks.map(t => ({
     id: t.id,
@@ -400,19 +463,24 @@ export const optimizeSchedule = async (
   const prompt = `Optimize maintenance schedule: ${year}-${month+1}. Techs: ${JSON.stringify(techCounts)}. Tasks: ${JSON.stringify(strippedTasks)}`;
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      config: {
-        systemInstruction: "You are a specialized Maintenance Scheduler. Allocate tasks to specific dates in the given month while respecting workforce capacity limits.",
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          additionalProperties: { type: Type.STRING }
-        } as any,
-        temperature: 0.1
+    const response = await callWithModelFallback(
+      ['gemini-3.7-flash'],
+      async (model) => {
+        return await ai.models.generateContent({
+          model,
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          config: {
+            systemInstruction: "You are a specialized Maintenance Scheduler. Allocate tasks to specific dates in the given month while respecting workforce capacity limits.",
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              additionalProperties: { type: Type.STRING }
+            } as any,
+            temperature: 0.1
+          }
+        });
       }
-    });
+    );
 
     return JSON.parse(response.text || "{}");
   } catch (error) {
@@ -422,8 +490,7 @@ export const optimizeSchedule = async (
 };
 
 export const rationalizeTasks = async (tasks: any[], requiredHours: number, capacityHours: number, language: string = 'English') => {
-  const apiKey = getApiKey();
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = getGeminiClient();
 
   const strippedTasks = tasks.map(t => ({
     id: t.id,
@@ -437,29 +504,34 @@ export const rationalizeTasks = async (tasks: any[], requiredHours: number, capa
   const prompt = `Rationalize tasks: Required: ${requiredHours}, Capacity: ${capacityHours}. Tasks: ${JSON.stringify(strippedTasks)}. Target Language: ${language}`;
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      config: {
-        systemInstruction: `You are a Strategy Asset Auditor. Identify redundant or low-value tasks. All technical justifications and suggested intervals MUST be written EXCLUSIVELY in ${language}.`,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              taskId: { type: Type.STRING },
-              action: { type: Type.STRING, enum: ["extend", "delete"] },
-              suggestedInterval: { type: Type.STRING },
-              hoursSaved: { type: Type.NUMBER },
-              justification: { type: Type.STRING }
-            },
-            required: ["taskId", "action", "hoursSaved", "justification"]
+    const response = await callWithModelFallback(
+      ['gemini-3.7-flash'],
+      async (model) => {
+        return await ai.models.generateContent({
+          model,
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          config: {
+            systemInstruction: `You are a Strategy Asset Auditor. Identify redundant or low-value tasks. All technical justifications and suggested intervals MUST be written EXCLUSIVELY in ${language}.`,
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  taskId: { type: Type.STRING },
+                  action: { type: Type.STRING, enum: ["extend", "delete"] },
+                  suggestedInterval: { type: Type.STRING },
+                  hoursSaved: { type: Type.NUMBER },
+                  justification: { type: Type.STRING }
+                },
+                required: ["taskId", "action", "hoursSaved", "justification"]
+              }
+            } as any,
+            temperature: 0.2
           }
-        } as any,
-        temperature: 0.2
+        });
       }
-    });
+    );
     return JSON.parse(response.text || "[]");
   } catch (error) {
     console.error("Error rationalizing tasks:", error);
@@ -468,8 +540,7 @@ export const rationalizeTasks = async (tasks: any[], requiredHours: number, capa
 };
 
 export const suggestTaskBundles = async (tasks: any[], language: string = 'English') => {
-  const apiKey = getApiKey();
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = getGeminiClient();
 
   const strippedTasks = tasks.map(t => ({
     id: t.id,
@@ -482,27 +553,32 @@ export const suggestTaskBundles = async (tasks: any[], language: string = 'Engli
   const prompt = `Suggest task bundles: ${JSON.stringify(strippedTasks)}. Target Language: ${language}`;
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      config: {
-        systemInstruction: `You are a Maintenance Optimization Expert. Group similar tasks. Bundle names and intervals MUST be written EXCLUSIVELY in ${language}.`,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              name: { type: Type.STRING },
-              interval: { type: Type.STRING },
-              taskIds: { type: Type.ARRAY, items: { type: Type.STRING } }
-            },
-            required: ["name", "interval", "taskIds"]
+    const response = await callWithModelFallback(
+      ['gemini-3.7-flash'],
+      async (model) => {
+        return await ai.models.generateContent({
+          model,
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          config: {
+            systemInstruction: `You are a Maintenance Optimization Expert. Group similar tasks. Bundle names and intervals MUST be written EXCLUSIVELY in ${language}.`,
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  name: { type: Type.STRING },
+                  interval: { type: Type.STRING },
+                  taskIds: { type: Type.ARRAY, items: { type: Type.STRING } }
+                },
+                required: ["name", "interval", "taskIds"]
+              }
+            } as any,
+            temperature: 0.2
           }
-        } as any,
-        temperature: 0.2
+        });
       }
-    });
+    );
 
     return JSON.parse(response.text || "[]");
   } catch (error) {
@@ -527,20 +603,24 @@ const rbiSchema = {
 };
 
 export const generateRBIAnalysis = async (item: RCMItem, language: string = 'English'): Promise<any> => {
-  const apiKey = getApiKey();
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = getGeminiClient();
   
   const prompt = `Conduct RBI analysis for: ${item.component}. Language: ${language}`;
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-3-flash-preview',
-    contents: [{ role: 'user', parts: [{ text: prompt }] }],
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: rbiSchema as any,
-      temperature: 0.3
-    },
-  });
+  const response = await callWithModelFallback(
+    ['gemini-3.7-flash'],
+    async (model) => {
+      return await ai.models.generateContent({
+        model,
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: rbiSchema as any,
+          temperature: 0.3
+        },
+      });
+    }
+  );
 
   return JSON.parse(response.text || "{}");
 };
@@ -551,31 +631,35 @@ export const mapFunctionalLocations = async (
   studyName: string,
   contextText: string
 ): Promise<Record<string, string>> => {
-  const apiKey = getApiKey();
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = getGeminiClient();
   
   const prompt = `Map components to locations: ${studyName}. Context: ${contextText}. Locations: ${JSON.stringify(functionalLocations)}`;
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              id: { type: Type.STRING },
-              locIndex: { type: Type.INTEGER }
-            },
-            required: ["id", "locIndex"]
+    const response = await callWithModelFallback(
+      ['gemini-3.7-flash'],
+      async (model) => {
+        return await ai.models.generateContent({
+          model,
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          config: {
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  id: { type: Type.STRING },
+                  locIndex: { type: Type.INTEGER }
+                },
+                required: ["id", "locIndex"]
+              }
+            } as any,
+            temperature: 0.1
           }
-        } as any,
-        temperature: 0.1
+        });
       }
-    });
+    );
 
     const parsed = JSON.parse(response.text || "[]");
     const mapping: Record<string, string> = {};

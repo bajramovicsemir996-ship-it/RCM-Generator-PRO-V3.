@@ -286,8 +286,7 @@ export const KnowledgeHub: React.FC<KnowledgeHubProps> = ({
                 <Layers size={16} className="group-hover:text-indigo-500 transition-colors" /> Import Folder
                 <input 
                   type="file" 
-                  webkitdirectory="" 
-                  directory="" 
+                  {...({ webkitdirectory: "", directory: "" } as any)}
                   multiple 
                   className="hidden" 
                   onChange={(e) => handleFileUpload(e, { extractZip: true })} 

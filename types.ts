@@ -1,5 +1,6 @@
 
 export interface InspectionStep {
+  id?: string;
   step: number;
   description: string;
   criteria: string;

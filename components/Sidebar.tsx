@@ -51,6 +51,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [deleteConfirm, setDeleteConfirm] = useState<{ type: 'study' | 'folder', id: string } | null>(null);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set(folders.map(f => f.id)));
   const [showMoveMenu, setShowMoveMenu] = useState<string | null>(null);
+  const [isCreatingFolder, setIsCreatingFolder] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
+  const [renamingFolder, setRenamingFolder] = useState<{ id: string, name: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const toggleFolder = (id: string) => {
@@ -61,13 +64,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const handleCreateFolder = () => {
-    const name = prompt("Enter folder name:");
-    if (name) onNewFolder(name);
+    if (newFolderName.trim()) {
+      onNewFolder(newFolderName.trim());
+      setNewFolderName('');
+      setIsCreatingFolder(false);
+    }
   };
 
-  const handleRenameFolderPrompt = (id: string, currentName: string) => {
-    const name = prompt("Enter new folder name:", currentName);
-    if (name && name !== currentName) onRenameFolder(id, name);
+  const handleRenameFolder = () => {
+    if (renamingFolder && renamingFolder.name.trim()) {
+      onRenameFolder(renamingFolder.id, renamingFolder.name.trim());
+      setRenamingFolder(null);
+    }
   };
 
   const handleImportClick = () => {
@@ -247,7 +255,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <Upload size={18} />
           </button>
           <button
-            onClick={handleCreateFolder}
+            onClick={() => setIsCreatingFolder(true)}
             className="p-2.5 bg-slate-100 hover:bg-indigo-50 text-slate-600 hover:text-indigo-600 rounded-xl transition-all active:scale-95"
             title="New Folder"
           >
@@ -258,7 +266,29 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* Folders and Studies List */}
       <div className="flex-1 overflow-y-auto custom-scrollbar p-3 bg-slate-50/50">
-        {folders.length === 0 && studies.length === 0 ? (
+        {isCreatingFolder && (
+          <div className="mb-4 p-3 bg-indigo-50 rounded-2xl border border-indigo-100 animate-in slide-in-from-top-2">
+            <div className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-2">New Folder</div>
+            <input 
+              autoFocus
+              type="text" 
+              value={newFolderName}
+              onChange={(e) => setNewFolderName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleCreateFolder();
+                if (e.key === 'Escape') setIsCreatingFolder(false);
+              }}
+              placeholder="Folder Name..."
+              className="w-full px-3 py-2 bg-white border border-indigo-200 rounded-lg text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 mb-3"
+            />
+            <div className="flex gap-2">
+              <button onClick={handleCreateFolder} className="flex-1 py-2 bg-indigo-600 text-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-all">Create</button>
+              <button onClick={() => setIsCreatingFolder(false)} className="flex-1 py-2 bg-white text-slate-400 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-slate-50 transition-all">Cancel</button>
+            </div>
+          </div>
+        )}
+
+        {folders.length === 0 && studies.length === 0 && !isCreatingFolder ? (
           <div className="text-center py-12 px-4">
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-slate-100 text-slate-300 mb-4">
               <FolderOpen size={32} strokeWidth={1.5} />
@@ -283,12 +313,28 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     </button>
                     <div onClick={() => toggleFolder(folder.id)} className="flex-1 flex items-center gap-2">
                       <FolderPlus size={16} className={`${isExpanded ? 'text-indigo-600' : 'text-slate-400'}`} />
-                      <span className={`text-xs font-black uppercase tracking-widest truncate max-w-[120px] ${isExpanded ? 'text-indigo-700' : 'text-slate-500'}`}>{folder.name}</span>
+                      {renamingFolder?.id === folder.id ? (
+                        <input 
+                          autoFocus
+                          type="text"
+                          value={renamingFolder.name}
+                          onChange={(e) => setRenamingFolder({ ...renamingFolder, name: e.target.value })}
+                          onClick={(e) => e.stopPropagation()}
+                          onBlur={handleRenameFolder}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleRenameFolder();
+                            if (e.key === 'Escape') setRenamingFolder(null);
+                          }}
+                          className="flex-1 bg-white border border-indigo-300 rounded px-1.5 py-0.5 text-xs font-bold text-indigo-700 focus:outline-none"
+                        />
+                      ) : (
+                        <span className={`text-xs font-black uppercase tracking-widest truncate max-w-[120px] ${isExpanded ? 'text-indigo-700' : 'text-slate-500'}`}>{folder.name}</span>
+                      )}
                       <span className="text-[10px] bg-white px-1.5 py-0.5 rounded border border-slate-100 text-slate-400 font-bold">{folderStudies.length}</span>
                     </div>
                     <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
                       <button 
-                        onClick={(e) => { e.stopPropagation(); handleRenameFolderPrompt(folder.id, folder.name); }}
+                        onClick={(e) => { e.stopPropagation(); setRenamingFolder({ id: folder.id, name: folder.name }); }}
                         className="p-1 text-slate-300 hover:text-indigo-600 transition-all"
                         title="Rename Folder"
                       >

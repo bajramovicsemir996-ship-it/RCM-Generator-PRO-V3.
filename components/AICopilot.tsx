@@ -1,8 +1,8 @@
 
 
-import { GoogleGenAI } from "@google/genai";
 import React, { useState, useRef, useEffect } from 'react';
 import { RCMItem, ConsequenceCategory } from '../types';
+import { getGeminiClient, callWithModelFallback } from '../services/geminiService';
 import { 
   X, Send, Sparkles, ChevronDown, 
   Plus, CheckCircle2, Search, 
@@ -149,7 +149,7 @@ export const AICopilot: React.FC<AICopilotProps> = ({ data, onUpdate, language }
     setIsLoading(true);
 
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      const ai = getGeminiClient();
       const studySummary = data.slice(-30).map(i => ({
         comp: i.component,
         fail: i.failureMode,
@@ -175,15 +175,20 @@ export const AICopilot: React.FC<AICopilotProps> = ({ data, onUpdate, language }
         ${RCM_FIELDS_PROMPT}
       `;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.1-pro-preview',
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        config: {
-          temperature: 0.4,
-          seed: 42,
-          systemInstruction: `You are MIRA, the Lead RCM Facilitator. You are technical, rigorous, and proactive. Your primary job during an audit is to provide actionable <ACTION> blocks for missing failure modes. You MUST communicate and generate tasks EXCLUSIVELY in ${language}. NEVER use English unless the target language is English.`
+      const response = await callWithModelFallback(
+        ['gemini-3.7-flash', 'gemini-2.5-flash', 'gemini-3.1-pro-preview'],
+        async (model) => {
+          return await ai.models.generateContent({
+            model,
+            contents: [{ role: 'user', parts: [{ text: prompt }] }],
+            config: {
+              temperature: 0.4,
+              seed: 42,
+              systemInstruction: `You are MIRA, the Lead RCM Facilitator. You are technical, rigorous, and proactive. Your primary job during an audit is to provide actionable <ACTION> blocks for missing failure modes. You MUST communicate and generate tasks EXCLUSIVELY in ${language}. NEVER use English unless the target language is English.`
+            }
+          });
         }
-      });
+      );
 
       const { cleanText, proposals } = parseAIResponse(response.text || "");
       setMessages(prev => [...prev, { 
@@ -209,7 +214,7 @@ export const AICopilot: React.FC<AICopilotProps> = ({ data, onUpdate, language }
     setIsLoading(true);
 
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      const ai = getGeminiClient();
       const currentItems = (data || []).slice(-15).map(i => ({ c: i.component, fm: i.failureMode }));
       
       const prompt = `
@@ -229,15 +234,20 @@ export const AICopilot: React.FC<AICopilotProps> = ({ data, onUpdate, language }
         ${RCM_FIELDS_PROMPT}
       `;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.1-pro-preview',
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        config: {
-          temperature: 0.4,
-          seed: 42,
-          systemInstruction: `You are MIRA, the Lead RCM Facilitator. You synthesize SAE JA1011 strategies EXCLUSIVELY in ${language}. You always provide implementable technical additions using <ACTION> tags when helping the user build their study. You MUST only use ${language} in your response and generated actions.`
+      const response = await callWithModelFallback(
+        ['gemini-3.7-flash', 'gemini-2.5-flash', 'gemini-3.1-pro-preview'],
+        async (model) => {
+          return await ai.models.generateContent({
+            model,
+            contents: [{ role: 'user', parts: [{ text: prompt }] }],
+            config: {
+              temperature: 0.4,
+              seed: 42,
+              systemInstruction: `You are MIRA, the Lead RCM Facilitator. You synthesize SAE JA1011 strategies EXCLUSIVELY in ${language}. You always provide implementable technical additions using <ACTION> tags when helping the user build their study. You MUST only use ${language} in your response and generated actions.`
+            }
+          });
         }
-      });
+      );
 
       const { cleanText, proposals } = parseAIResponse(response.text || "");
       setMessages(prev => [...prev, { 

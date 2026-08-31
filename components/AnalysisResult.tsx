@@ -7,6 +7,23 @@ import { InspectionChatbot } from './InspectionChatbot';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip as RechartsTooltip, Cell 
 } from 'recharts';
+import {
+  DndContext, 
+  closestCorners,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+  useSortable
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { 
   AlertTriangle, CheckCircle, Clock, Activity, FileText, 
   Pencil, Trash2, Save, X, ClipboardList, Loader2,
@@ -54,6 +71,142 @@ const getScoreColor = (score: number) => {
   if (score >= 8) return 'text-red-600 font-bold';
   if (score >= 5) return 'text-amber-600 font-medium';
   return 'text-slate-500';
+};
+
+const SortableStepRow: React.FC<{
+  id: string;
+  step: InspectionStep;
+  idx: number;
+  isEditing: boolean;
+  onEdit: () => void;
+  onCancel: () => void;
+  onUpdateField: (field: keyof InspectionStep, val: string | number) => void;
+  onDelete: () => void;
+}> = ({ id, step, idx, isEditing, onEdit, onCancel, onUpdateField, onDelete }) => {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging
+  } = useSortable({ id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    zIndex: isDragging ? 100 : 'auto',
+    position: 'relative' as const,
+  };
+
+  return (
+    <tr 
+      ref={setNodeRef}
+      style={style}
+      className={`group transition-all ${isEditing ? 'bg-indigo-50/50 ring-1 ring-inset ring-indigo-200 shadow-sm' : 'hover:bg-slate-50/80'} ${isDragging ? 'opacity-50 cursor-grabbing bg-white shadow-2xl ring-2 ring-indigo-500' : ''}`}
+      onClick={() => !isEditing && onEdit()}
+    >
+      <td className="px-8 py-6 text-xs font-black text-indigo-600 text-center relative">
+        <div 
+          {...attributes} 
+          {...listeners} 
+          className="absolute left-2 top-1/2 -translate-y-1/2 opacity-30 group-hover:opacity-100 cursor-grab active:cursor-grabbing p-1 transition-opacity"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <LayoutList size={14} />
+        </div>
+        <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center mx-auto transition-transform group-hover:scale-110">
+          {isEditing ? (
+            <input 
+              type="number"
+              value={step.step}
+              onChange={(e) => onUpdateField('step', parseInt(e.target.value))}
+              className="w-full bg-transparent text-center font-black text-indigo-600 outline-none"
+              onClick={(e) => e.stopPropagation()}
+            />
+          ) : step.step}
+        </div>
+      </td>
+      <td className="px-8 py-6 cursor-text">
+        {isEditing ? (
+          <textarea 
+            value={step.description}
+            onChange={(e) => {
+              onUpdateField('description', e.target.value);
+              e.target.style.height = 'inherit';
+              e.target.style.height = `${e.target.scrollHeight}px`;
+            }}
+            className="w-full p-4 text-sm bg-white border border-indigo-100 rounded-xl focus:ring-2 focus:ring-indigo-100 outline-none font-bold text-slate-800 leading-relaxed resize-none shadow-sm transition-all"
+            autoFocus
+            ref={(el) => {
+              if (el) {
+                el.style.height = 'inherit';
+                el.style.height = `${el.scrollHeight}px`;
+              }
+            }}
+            onClick={(e) => e.stopPropagation()}
+            onBlur={onCancel}
+          />
+        ) : (
+          <p className="text-sm font-bold text-slate-800 leading-relaxed tracking-tight break-words uppercase">
+            {step.description}
+          </p>
+        )}
+      </td>
+      <td className="px-8 py-6 text-center cursor-text">
+         <div className={`flex items-center justify-center min-h-[3rem] px-3 py-2 rounded-xl w-full border transition-all ${isEditing ? 'bg-white border-indigo-100 shadow-sm' : 'bg-slate-100/30 border-transparent hover:bg-slate-100'}`}>
+            {isEditing ? (
+              <input 
+                type="text"
+                value={step.technique}
+                onChange={(e) => onUpdateField('technique', e.target.value)}
+                className="w-full bg-transparent text-[10px] font-black text-indigo-700 uppercase tracking-tighter outline-none text-center"
+                onClick={(e) => { e.stopPropagation(); }}
+                onBlur={onCancel}
+              />
+            ) : (
+              <span className="text-[10px] font-black text-indigo-700 uppercase tracking-tighter break-words">{step.technique}</span>
+            )}
+         </div>
+      </td>
+      <td className="px-8 py-6 cursor-text">
+         <div className={`flex items-start gap-3 p-4 rounded-2xl border min-h-[5rem] transition-all ${isEditing ? 'bg-white border-emerald-100 shadow-sm' : 'bg-emerald-50/10 border-transparent hover:bg-emerald-50/30'}`}>
+            <CheckCircle size={12} className={`mt-1 shrink-0 ${isEditing ? 'text-emerald-500' : 'text-emerald-300'}`} />
+            {isEditing ? (
+              <textarea 
+                value={step.criteria}
+                onChange={(e) => {
+                  onUpdateField('criteria', e.target.value);
+                  e.target.style.height = 'inherit';
+                  e.target.style.height = `${e.target.scrollHeight}px`;
+                }}
+                className="w-full bg-transparent text-[11px] font-bold text-emerald-800 leading-tight outline-none resize-none"
+                ref={(el) => {
+                  if (el) {
+                    el.style.height = 'inherit';
+                    el.style.height = `${el.scrollHeight}px`;
+                  }
+                }}
+                onClick={(e) => e.stopPropagation()}
+                onBlur={onCancel}
+              />
+            ) : (
+              <p className="text-[11px] font-bold text-emerald-800 leading-tight break-words">{step.criteria}</p>
+            )}
+         </div>
+      </td>
+      <td className="px-8 py-6 text-right">
+        <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+          {isEditing ? (
+            <button onClick={(e) => { e.stopPropagation(); onCancel(); }} className="p-2 bg-emerald-500 text-white rounded-xl shadow-lg shadow-emerald-200 transition-all hover:scale-110"><CheckCircle size={14} /></button>
+          ) : (
+            <button onClick={(e) => { e.stopPropagation(); onEdit(); }} className="p-2 bg-white text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 border border-slate-100 rounded-xl shadow-sm transition-all hover:scale-110"><Pencil size={14} /></button>
+          )}
+          <button onClick={(e) => { e.stopPropagation(); onDelete(); }} className="p-2 bg-white text-slate-400 hover:text-red-600 hover:bg-red-50 border border-slate-100 rounded-xl shadow-sm transition-all hover:scale-110"><Trash2 size={14} /></button>
+        </div>
+      </td>
+    </tr>
+  );
 };
 
 export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, studyName, contextText, filesData = [], onUpdate, onUpdateFiles, onUndo, canUndo, language }) => {
@@ -395,6 +548,7 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, studyName,
     const item = viewSheet.item;
     const sheet = item.inspectionSheet || { responsibility: 'Operator', estimatedTime: '10m', safetyPrecautions: 'Standard PPE', toolsRequired: 'None', steps: [] };
     const newStep: InspectionStep = {
+      id: `step-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       step: (sheet.steps?.length || 0) + 1,
       description: 'New inspection action',
       criteria: 'Pass/Fail criteria',
@@ -420,6 +574,26 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, studyName,
       setViewSheet({ item: updatedItem });
       updateItemInMainData(updatedItem);
     }, 0);
+  };
+
+  const handleOpenSheet = (item: RCMItem) => {
+    if (item.inspectionSheet?.steps) {
+      const hasMissingIds = item.inspectionSheet.steps.some(s => !s.id);
+      if (hasMissingIds) {
+        const updatedSteps = item.inspectionSheet.steps.map((s, i) => ({
+          ...s,
+          id: s.id || `step-${Date.now()}-${i}-${Math.random().toString(36).substr(2, 5)}`
+        }));
+        const updatedItem = {
+          ...item,
+          inspectionSheet: { ...item.inspectionSheet, steps: updatedSteps }
+        };
+        updateItemInMainData(updatedItem);
+        setViewSheet({ item: updatedItem });
+        return;
+      }
+    }
+    setViewSheet({ item });
   };
 
   const handleUpdateSheetSteps = (itemId: string, newSteps: InspectionStep[]) => {
@@ -749,6 +923,30 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, studyName,
     );
   };
 
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!viewSheet || !over || active.id === over.id) return;
+
+    const item = viewSheet.item;
+    const sheet = item.inspectionSheet;
+    if (!sheet || !sheet.steps) return;
+
+    const oldIndex = sheet.steps.findIndex((s, idx) => s.id === active.id || `step-legacy-${idx}-${item.id}` === active.id);
+    const newIndex = sheet.steps.findIndex((s, idx) => s.id === over.id || `step-legacy-${idx}-${item.id}` === over.id);
+
+    if (oldIndex === -1 || newIndex === -1) return;
+
+    const newSteps = arrayMove(sheet.steps, oldIndex, newIndex).map((s, i) => ({ ...s, step: i + 1 }));
+    handleUpdateSheetSteps(item.id, newSteps);
+  };
+
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
   const renderInspectionSheet = () => {
     if (!viewSheet) return null;
     const item = viewSheet.item;
@@ -756,17 +954,24 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, studyName,
     if (!sheet) return null;
     const isRegenerating = regeneratingIds.has(item.id);
 
+    // Ensure all steps have a stable ID for Drag and Drop
+    const stepsWithIds = (sheet.steps || []).map((s, idx) => ({
+      ...s,
+      id: s.id || `step-legacy-${idx}-${item.id}`
+    }));
+
     return (
       <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 backdrop-blur-md p-4 lg:p-10 animate-in fade-in duration-300">
         <div className="bg-slate-50 rounded-[3rem] shadow-[0_30px_100px_rgba(0,0,0,0.4)] w-full max-w-[95vw] h-full lg:h-[95vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-400 border border-white/20 relative">
           
-          <InspectionChatbot 
-            sheet={sheet}
-            language={language}
-            onUpdateSteps={(newSteps) => handleUpdateSheetSteps(item.id, newSteps)}
-            componentContext={item.component}
-            failureModeContext={item.failureMode}
-          />
+            <InspectionChatbot 
+              sheet={sheet}
+              language={language}
+              onUpdateSteps={(newSteps) => handleUpdateSheetSteps(item.id, newSteps)}
+              componentContext={item.component}
+              failureModeContext={item.failureMode}
+              maintenanceTaskContext={item.maintenanceTask}
+            />
 
           {/* Header */}
           <div translate="no" className="bg-slate-900 px-10 py-8 flex justify-between items-center text-white shrink-0">
@@ -847,7 +1052,7 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, studyName,
                   type="text"
                   value={sheet.responsibility}
                   onChange={(e) => handleUpdateSheetHeaderField('responsibility', e.target.value)}
-                  className="w-full text-base font-black text-slate-900 uppercase tracking-tight bg-slate-50/50 p-3 rounded-xl border-2 border-transparent focus:border-indigo-100 focus:bg-white outline-none transition-all"
+                  className="w-full text-base font-black text-slate-900 uppercase tracking-tight bg-transparent border-b border-transparent focus:border-indigo-200 outline-none transition-all py-1"
                   placeholder="Unit responsible..."
                 />
               </div>
@@ -860,7 +1065,7 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, studyName,
                   type="text"
                   value={sheet.estimatedTime}
                   onChange={(e) => handleUpdateSheetHeaderField('estimatedTime', e.target.value)}
-                  className="w-full text-base font-black text-slate-900 uppercase tracking-tight bg-slate-50/50 p-3 rounded-xl border-2 border-transparent focus:border-indigo-100 focus:bg-white outline-none transition-all"
+                  className="w-full text-base font-black text-slate-900 uppercase tracking-tight bg-transparent border-b border-transparent focus:border-indigo-200 outline-none transition-all py-1"
                   placeholder="e.g. 45 min..."
                 />
               </div>
@@ -871,9 +1076,18 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, studyName,
                 </div>
                 <textarea 
                   value={sheet.safetyPrecautions}
-                  onChange={(e) => handleUpdateSheetHeaderField('safetyPrecautions', e.target.value)}
-                  className="w-full text-sm font-bold text-slate-700 leading-tight bg-slate-50/50 p-3 rounded-xl border-2 border-transparent focus:border-indigo-100 focus:bg-white outline-none resize-none transition-all"
-                  rows={2}
+                  onChange={(e) => {
+                    handleUpdateSheetHeaderField('safetyPrecautions', e.target.value);
+                    e.target.style.height = 'inherit';
+                    e.target.style.height = `${e.target.scrollHeight}px`;
+                  }}
+                  className="w-full text-sm font-bold text-slate-700 leading-tight bg-transparent border-b border-transparent focus:border-indigo-200 outline-none resize-none transition-all py-1"
+                  ref={(el) => {
+                    if (el) {
+                      el.style.height = 'inherit';
+                      el.style.height = `${el.scrollHeight}px`;
+                    }
+                  }}
                   placeholder="Describe safety precautions..."
                 />
               </div>
@@ -884,104 +1098,61 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, studyName,
                 </div>
                 <textarea 
                   value={sheet.toolsRequired}
-                  onChange={(e) => handleUpdateSheetHeaderField('toolsRequired', e.target.value)}
-                  className="w-full text-sm font-bold text-slate-700 leading-tight bg-slate-50/50 p-3 rounded-xl border-2 border-transparent focus:border-indigo-100 focus:bg-white outline-none resize-none transition-all"
-                  rows={2}
+                  onChange={(e) => {
+                    handleUpdateSheetHeaderField('toolsRequired', e.target.value);
+                    e.target.style.height = 'inherit';
+                    e.target.style.height = `${e.target.scrollHeight}px`;
+                  }}
+                  className="w-full text-sm font-bold text-slate-700 leading-tight bg-transparent border-b border-transparent focus:border-indigo-200 outline-none resize-none transition-all py-1"
+                  ref={(el) => {
+                    if (el) {
+                      el.style.height = 'inherit';
+                      el.style.height = `${el.scrollHeight}px`;
+                    }
+                  }}
                   placeholder="Required tools..."
                 />
               </div>
             </div>
 
             <div className="bg-white rounded-[2.2rem] border border-slate-200 overflow-hidden shadow-2xl">
-              <table className="w-full text-left table-fixed">
-                <thead className="bg-slate-900 border-b border-slate-800">
-                  <tr className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
-                    <th className="px-8 py-5 w-20 text-center">Step</th>
-                    <th className="px-8 py-5 w-[25%] uppercase">Technical Action Sequence</th>
-                    <th className="px-8 py-5 w-[25%] text-center uppercase">Method</th>
-                    <th className="px-8 py-5 w-[40%] uppercase">Acceptance Criteria</th>
-                    <th className="px-8 py-5 w-20 text-right"></th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {[...(sheet.steps || [])].sort((a, b) => (a.step || 0) - (b.step || 0)).map((step, idx) => (
-                    <tr 
-                      key={idx} 
-                      className={`group transition-all ${editingStepIdx === idx ? 'bg-indigo-50/50' : 'hover:bg-slate-50'}`}
-                      onClick={() => editingStepIdx !== idx && setEditingStepIdx(idx)}
-                    >
-                      <td className="px-8 py-6 text-xs font-black text-indigo-600 text-center cursor-pointer">
-                        <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center mx-auto">
-                          {editingStepIdx === idx ? (
-                            <input 
-                              type="number"
-                              value={step.step}
-                              onChange={(e) => handleUpdateStepField(idx, 'step', parseInt(e.target.value))}
-                              className="w-full bg-transparent text-center font-black text-indigo-600 outline-none"
-                              onClick={(e) => e.stopPropagation()}
-                            />
-                          ) : step.step}
-                        </div>
-                      </td>
-                      <td className="px-8 py-6 cursor-text">
-                        {editingStepIdx === idx ? (
-                          <textarea 
-                            value={step.description}
-                            onChange={(e) => handleUpdateStepField(idx, 'description', e.target.value)}
-                            className="w-full p-4 text-sm bg-white border-2 border-indigo-200 rounded-2xl focus:ring-4 focus:ring-indigo-100 outline-none font-medium resize-none shadow-sm"
-                            rows={3}
-                            autoFocus
-                            onClick={(e) => e.stopPropagation()}
-                          />
-                        ) : (
-                          <p className="text-sm font-bold text-slate-800 leading-relaxed uppercase tracking-tight break-words">{step.description}</p>
-                        )}
-                      </td>
-                      <td className="px-8 py-6 text-center cursor-text">
-                         <div className="flex items-center justify-center min-h-[4rem] px-3 py-2 bg-indigo-50 border border-indigo-100 rounded-xl w-full">
-                            {editingStepIdx === idx ? (
-                              <textarea 
-                                value={step.technique}
-                                onChange={(e) => handleUpdateStepField(idx, 'technique', e.target.value)}
-                                className="w-full bg-transparent text-[10px] font-black text-indigo-700 uppercase tracking-tighter outline-none resize-none text-center"
-                                rows={3}
-                                onClick={(e) => { e.stopPropagation(); }}
-                              />
-                            ) : (
-                              <span className="text-[10px] font-black text-indigo-700 uppercase tracking-tighter break-words overflow-visible">{step.technique}</span>
-                            )}
-                         </div>
-                      </td>
-                      <td className="px-8 py-6 cursor-text">
-                         <div className="flex items-start gap-3 p-4 bg-emerald-50/30 rounded-2xl border border-emerald-100/50 min-h-[6rem]">
-                            <CheckCircle size={12} className="mt-1 text-emerald-600 shrink-0" />
-                            {editingStepIdx === idx ? (
-                              <textarea 
-                                value={step.criteria}
-                                onChange={(e) => handleUpdateStepField(idx, 'criteria', e.target.value)}
-                                className="w-full bg-transparent text-[11px] font-bold text-emerald-800 leading-tight outline-none resize-none"
-                                rows={4}
-                                onClick={(e) => e.stopPropagation()}
-                              />
-                            ) : (
-                              <p className="text-[11px] font-bold text-emerald-800 leading-tight break-words">{step.criteria}</p>
-                            )}
-                         </div>
-                      </td>
-                      <td className="px-8 py-6 text-right">
-                        <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                          {editingStepIdx === idx ? (
-                            <button onClick={() => setEditingStepIdx(null)} className="p-2 bg-emerald-500 text-white rounded-xl transition-all"><CheckCircle size={14} /></button>
-                          ) : (
-                            <button onClick={() => setEditingStepIdx(idx)} className="p-2 bg-slate-100 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all"><Pencil size={14} /></button>
-                          )}
-                          <button onClick={() => handleDeleteStep(idx)} className="p-2 bg-slate-100 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all"><Trash2 size={14} /></button>
-                        </div>
-                      </td>
+              <DndContext 
+                sensors={sensors}
+                collisionDetection={closestCorners}
+                onDragEnd={handleDragEnd}
+              >
+                <table className="w-full text-left table-fixed border-separate border-spacing-0">
+                  <thead className="bg-slate-900 border-b border-slate-800">
+                    <tr className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
+                      <th className="px-8 py-5 w-24 text-center">Step</th>
+                      <th className="px-8 py-5 w-[30%] uppercase">Technical Action Sequence</th>
+                      <th className="px-8 py-5 w-[20%] text-center uppercase">Method</th>
+                      <th className="px-8 py-5 w-[40%] uppercase">Acceptance Criteria</th>
+                      <th className="px-8 py-5 w-24 text-right"></th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    <SortableContext 
+                      items={stepsWithIds.map(s => s.id as string)}
+                      strategy={verticalListSortingStrategy}
+                    >
+                      {stepsWithIds.map((step, idx) => (
+                        <SortableStepRow 
+                          key={step.id}
+                          id={step.id as string}
+                          step={step}
+                          idx={idx}
+                          isEditing={editingStepIdx === idx}
+                          onEdit={() => setEditingStepIdx(idx)}
+                          onCancel={() => setEditingStepIdx(null)}
+                          onUpdateField={(field, val) => handleUpdateStepField(idx, field, val)}
+                          onDelete={() => handleDeleteStep(idx)}
+                        />
+                      ))}
+                    </SortableContext>
+                  </tbody>
+                </table>
+              </DndContext>
               <div className="p-6 bg-slate-50/50 border-t border-slate-100 flex justify-center">
                 <button 
                   onClick={handleAddStep}
@@ -1628,7 +1799,7 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, studyName,
                       </td>
                       <td className="align-middle text-center py-4 overflow-hidden">
                         {!isCollapsed('inspectionSheet') && (
-                          isRegenerating ? <RefreshCw size={20} className="animate-spin text-indigo-500 mx-auto" /> : item.inspectionSheet ? <button onClick={() => setViewSheet({ item })} className="text-emerald-500 hover:scale-110 transition-transform"><FileCheck size={22} /></button> : <button onClick={() => handleGenerateSingleSheet(item)} className="text-slate-300 hover:text-indigo-500"><File size={22} /></button>
+                          isRegenerating ? <RefreshCw size={20} className="animate-spin text-indigo-500 mx-auto" /> : item.inspectionSheet ? <button onClick={() => handleOpenSheet(item)} className="text-emerald-500 hover:scale-110 transition-transform"><FileCheck size={22} /></button> : <button onClick={() => handleGenerateSingleSheet(item)} className="text-slate-300 hover:text-indigo-500"><File size={22} /></button>
                         )}
                       </td>
                       <td className="align-middle text-right opacity-0 group-hover:opacity-100 transition-opacity py-4 px-2 overflow-hidden">

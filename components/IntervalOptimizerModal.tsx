@@ -2,7 +2,7 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { X, Clock, Zap, Target, Calculator, CheckCircle2, Bot, Send, User, Loader2, Sparkles, Activity, AlertTriangle, ArrowRight, ShieldCheck, ChevronRight } from 'lucide-react';
-import { GoogleGenAI } from "@google/genai";
+import { getGeminiClient, callWithModelFallback } from '../services/geminiService';
 import { RCMItem } from '../types';
 
 interface IntervalOptimizerModalProps {
@@ -170,7 +170,7 @@ export const IntervalOptimizerModal: React.FC<IntervalOptimizerModalProps> = ({ 
     setIsLoading(true);
 
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      const ai = getGeminiClient();
       
       const prompt = `
         FAILURE MODE CONTEXT:
@@ -193,15 +193,20 @@ export const IntervalOptimizerModal: React.FC<IntervalOptimizerModalProps> = ({ 
         8. Provide a technical explanation of why this frequency is more efficient without using bolding or special symbols.
       `;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        config: {
-          temperature: 0.4,
-          seed: 42,
-          systemInstruction: "You are an RCM Interval Optimization Engine. You use technical lead times and reliability statistics to calculate effective maintenance frequencies. You avoid all markdown formatting, bolding, and special characters in your output."
+      const response = await callWithModelFallback(
+        ['gemini-3.7-flash', 'gemini-2.5-flash'],
+        async (model) => {
+          return await ai.models.generateContent({
+            model,
+            contents: [{ role: 'user', parts: [{ text: prompt }] }],
+            config: {
+              temperature: 0.4,
+              seed: 42,
+              systemInstruction: "You are an RCM Interval Optimization Engine. You use technical lead times and reliability statistics to calculate effective maintenance frequencies. You avoid all markdown formatting, bolding, and special characters in your output."
+            }
+          });
         }
-      });
+      );
 
       const aiText = response.text || "Calculation error.";
       const intervalMatch = aiText.match(/<INTERVAL>([\s\S]*?)<\/INTERVAL>/);
